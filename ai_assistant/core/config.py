@@ -15,6 +15,7 @@ class PluginConfig:
     command_prefix: str = "!вопрос"
     mistral_api_key: str = ""
     groq_api_key: str = ""
+    openai_api_key: str = ""
     default_provider: str = "groq"
     system_prompt: str = field(default_factory=lambda: (
         "Ты - помощник продавца на FunPay. "

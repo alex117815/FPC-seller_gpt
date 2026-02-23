@@ -52,33 +52,46 @@ class MessageProcessor:
     def _extract_question(self, text: str) -> Optional[str]:
         prefix = self._config.command_prefix.lower()
         text_lower = text.lower().strip()
-        
+
         if not text_lower.startswith(prefix):
             return None
-        
+
         question = text[len(prefix):].strip()
         return question if question else None
+
+    def _is_reset_command(self, text: str) -> bool:
+        return text.strip().lower() in ("!сброс", "!reset", "!clear")
 
     def process_message(self, event: NewMessageEvent) -> None:
         if not self._should_process(event):
             return
 
-        question = self._extract_question(event.message.text)
+        text = event.message.text
+        chat_id = event.message.chat_id
+
+        if self._is_reset_command(text):
+            self._ai_manager.clear_history(chat_id)
+            self._lot_fetcher.clear_cache(chat_id)
+            self._cardinal.send_message(chat_id, "История диалога сброшена.")
+            logger.info(f"History reset for chat {chat_id}")
+            return
+
+        question = self._extract_question(text)
         if not question:
             return
 
-        logger.info(f"Processing question from chat {event.message.chat_id}")
+        logger.info(f"Processing question from chat {chat_id}")
 
-        context = self._lot_fetcher.get_lot_context(event.message.chat_id)
-        
+        context = self._lot_fetcher.get_lot_context(chat_id)
+
         response = self._ai_manager.generate_response(
-            chat_id=event.message.chat_id,
+            chat_id=chat_id,
             user_message=question,
-            context=context
+            context=context,
         )
 
         if response:
-            self._cardinal.send_message(event.message.chat_id, response)
-            logger.info(f"Response sent to chat {event.message.chat_id}")
+            self._cardinal.send_message(chat_id, response)
+            logger.info(f"Response sent to chat {chat_id}")
         else:
-            logger.warning(f"Failed to generate response for chat {event.message.chat_id}")
+            logger.warning(f"Failed to generate response for chat {chat_id}")

@@ -20,36 +20,57 @@ class AIProvider(ABC):
 
 
 class GroqProvider(AIProvider):
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
         self._client = ChatGroq(
             api_key=api_key,
-            model_name="groq/compound",
-            temperature=0.7
+            model_name=model,
+            temperature=0.7,
         )
 
     def generate_response(self, messages: List[BaseMessage]) -> Optional[str]:
         try:
             response = self._client.invoke(messages)
-            return response.content
+            return str(response.content)
         except Exception as e:
-            logger.error(f"Groq generation error: {e}")
+            logger.error(f"Groq error: {e}")
             return None
 
 
 class MistralProvider(AIProvider):
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: str = "mistral-small-latest"):
         self._client = ChatMistralAI(
             api_key=api_key,
-            model="mistral-small-2506",
-            temperature=0.7
+            model=model,
+            temperature=0.7,
         )
 
     def generate_response(self, messages: List[BaseMessage]) -> Optional[str]:
         try:
             response = self._client.invoke(messages)
-            return response.content
+            return str(response.content)
         except Exception as e:
-            logger.error(f"Mistral generation error: {e}")
+            logger.error(f"Mistral error: {e}")
+            return None
+
+
+class OpenAIProvider(AIProvider):
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+        try:
+            from langchain_openai import ChatOpenAI
+            self._client = ChatOpenAI(
+                api_key=api_key,
+                model=model,
+                temperature=0.7,
+            )
+        except ImportError:
+            raise RuntimeError("langchain-openai not installed: pip install langchain-openai")
+
+    def generate_response(self, messages: List[BaseMessage]) -> Optional[str]:
+        try:
+            response = self._client.invoke(messages)
+            return str(response.content)
+        except Exception as e:
+            logger.error(f"OpenAI error: {e}")
             return None
 
 
@@ -58,7 +79,8 @@ class AIManager:
         self._config = config
         self._providers: Dict[str, Optional[AIProvider]] = {
             "groq": None,
-            "mistral": None
+            "mistral": None,
+            "openai": None,
         }
         self._histories: Dict[int, InMemoryChatMessageHistory] = {}
         self._initialize_providers()
@@ -78,14 +100,21 @@ class AIManager:
             except Exception as e:
                 logger.error(f"Failed to init Mistral: {e}")
 
-    def _get_provider(self) -> Optional[AIProvider]:
-        provider = self._providers.get(self._config.default_provider)
-        if provider:
-            return provider
-        
-        for p in self._providers.values():
-            if p:
-                return p
+        if self._config.openai_api_key:
+            try:
+                self._providers["openai"] = OpenAIProvider(self._config.openai_api_key)
+                logger.info("OpenAI provider initialized")
+            except Exception as e:
+                logger.error(f"Failed to init OpenAI: {e}")
+
+    def _get_provider_with_fallback(self) -> Optional[AIProvider]:
+        preferred = self._providers.get(self._config.default_provider)
+        if preferred:
+            return preferred
+        for name, provider in self._providers.items():
+            if provider:
+                logger.warning(f"Falling back to provider: {name}")
+                return provider
         return None
 
     def _get_or_create_history(self, chat_id: int) -> InMemoryChatMessageHistory:
@@ -104,17 +133,17 @@ class AIManager:
         self,
         chat_id: int,
         user_message: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        provider = self._get_provider()
+        provider = self._get_provider_with_fallback()
         if not provider:
             logger.warning("No AI provider available")
             return None
 
         history = self._get_or_create_history(chat_id)
-        
+
         messages: List[BaseMessage] = [SystemMessage(content=self._config.system_prompt)]
-        
+
         if context:
             context_parts = []
             if context.get("title"):
@@ -123,23 +152,26 @@ class AIManager:
                 context_parts.append(f"Описание: {context['description']}")
             if context.get("price"):
                 context_parts.append(f"Цена: {context['price']}₽")
-            
             if context_parts:
                 messages.append(SystemMessage(content="\n".join(context_parts)))
-        
+
         messages.extend(history.messages)
         messages.append(HumanMessage(content=user_message))
-        
+
         response_content = provider.generate_response(messages)
-        
+
         if response_content:
             history.add_message(HumanMessage(content=user_message))
             history.add_message(AIMessage(content=response_content))
             self._trim_history(history)
-        
+
         return response_content
 
     def clear_history(self, chat_id: int) -> None:
         if chat_id in self._histories:
             self._histories[chat_id].clear()
             logger.debug(f"History cleared for chat {chat_id}")
+
+    def clear_all_histories(self) -> None:
+        self._histories.clear()
+        logger.info("All chat histories cleared")

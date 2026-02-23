@@ -1,4 +1,5 @@
 langchain
 langchain-groq
 langchain-mistralai
+langchain-openai
 langchain-core
